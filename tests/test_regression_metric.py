@@ -40,12 +40,13 @@ def test_ndcg():
     expected = 0.9205433036318259
 
 
-# --- Pseudo R² tests ---
-# Build a small synthetic dataset with known labels and scores (predictions).
+# --- Pseudo R² tests (McFadden's) ---
+# Build a small synthetic dataset with binary labels and probability scores.
 # privileged group: s == 'r' (mapped to 1), unprivileged group: s == 'b' (mapped to 0)
+# labels: binary (0 or 1); scores: predicted probabilities (0~1)
 _df_r2 = pd.DataFrame({
-    's':      ['r', 'r', 'r', 'b', 'b', 'b'],
-    'label':  [10.0, 20.0, 30.0, 40.0, 50.0, 60.0],
+    's':      ['r', 'r', 'r', 'r', 'b', 'b', 'b', 'b'],
+    'label':  [1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0],
 })
 _df_r2['s'] = _df_r2['s'].astype(object)
 _dataset_r2 = RegressionDataset(
@@ -53,10 +54,10 @@ _dataset_r2 = RegressionDataset(
     protected_attribute_names=['s'],
     privileged_classes=[['r']]
 )
-# Overwrite scores with imperfect predictions (in the normalized [0,1] space)
-# privileged group (s==1): predictions close to truth → high R²
-# unprivileged group (s==0): predictions less accurate → lower R²
-_preds = np.array([[0.0], [0.1], [0.2], [0.6], [0.9], [1.0]])  # shape (6,1)
+# privileged group: predictions close to true labels → higher McFadden R²
+# unprivileged group: predictions less accurate → lower McFadden R²
+_preds = np.array([[0.9], [0.8], [0.2], [0.1],   # privileged: good predictions
+                   [0.6], [0.4], [0.6], [0.4]])   # unprivileged: poor predictions
 _dataset_r2.scores = _preds
 
 _m_r2 = RegressionDatasetMetric(
@@ -69,20 +70,21 @@ _m_r2 = RegressionDatasetMetric(
 def test_pseudo_r2_overall():
     r2 = _m_r2.pseudo_r2()
     assert isinstance(r2, (float, np.floating)), f"Expected float, got {type(r2)}"
-    assert r2 <= 1.0, f"R² should be <= 1, got {r2}"
-    assert abs(r2 - 0.9142857142857143) < 1e-9, f"Unexpected overall R², got {r2}"
+    assert r2 <= 1.0, f"McFadden R² should be <= 1, got {r2}"
+    assert abs(r2 - 0.3667937806535049) < 1e-9, f"Unexpected overall McFadden R², got {r2}"
 
 
 def test_pseudo_r2_privileged():
     r2 = _m_r2.pseudo_r2(privileged=True)
     assert isinstance(r2, (float, np.floating)), f"Expected float, got {type(r2)}"
-    assert abs(r2 - 0.375) < 1e-9, f"Unexpected privileged R², got {r2}"
+    assert r2 > 0, f"Privileged McFadden R² should be > 0, got {r2}"
+    assert abs(r2 - 0.7630344058337939) < 1e-9, f"Unexpected privileged McFadden R², got {r2}"
 
 
 def test_pseudo_r2_unprivileged():
     r2 = _m_r2.pseudo_r2(privileged=False)
     assert isinstance(r2, (float, np.floating)), f"Expected float, got {type(r2)}"
-    assert abs(r2 - 0.875) < 1e-9, f"Unexpected unprivileged R², got {r2}"
+    assert abs(r2 - (-0.029446844526784144)) < 1e-9, f"Unexpected unprivileged McFadden R², got {r2}"
 
 
 def test_pseudo_r2_parity():
