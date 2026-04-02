@@ -1,5 +1,5 @@
 import numpy as np
-from aif360.metrics import DatasetMetric
+from aif360.metrics import DatasetMetric, utils
 from aif360.datasets import RegressionDataset
 
 
@@ -98,3 +98,58 @@ class RegressionDatasetMetric(DatasetMetric):
         logs = np.log2(np.arange(2, len(scores)+2))
         z = np.sum(scores/logs)
         return z
+
+    def pseudo_r2(self, privileged=None):
+        """Compute the Pseudo R² (coefficient of determination) for a group.
+
+        .. math::
+
+           R^2 = 1 - \\frac{SS_{res}}{SS_{tot}}
+
+        where :math:`SS_{res} = \\sum_i (y_i - \\hat{y}_i)^2` and
+        :math:`SS_{tot} = \\sum_i (y_i - \\bar{y})^2`.
+
+        Args:
+            privileged (bool, optional): Boolean prescribing whether to
+                condition this metric on the `privileged_groups`, if `True`, or
+                the `unprivileged_groups`, if `False`. Defaults to `None`
+                meaning this metric is computed over the entire dataset.
+
+        Returns:
+            numpy.float64: Pseudo R² value. Returns 0.0 if
+            :math:`SS_{tot} = 0` (all labels are identical).
+        """
+        condition = self._to_condition(privileged)
+        cond_vec = utils.compute_boolean_conditioning_vector(
+            self.dataset.protected_attributes,
+            self.dataset.protected_attribute_names,
+            condition)
+
+        y_true = np.ravel(self.dataset.labels)[cond_vec]
+        y_pred = np.ravel(self.dataset.scores)[cond_vec]
+
+        ss_res = np.sum((y_true - y_pred) ** 2)
+        ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+
+        if ss_tot == 0:
+            return np.float64(0.0)
+
+        return np.float64(1.0 - ss_res / ss_tot)
+
+    def pseudo_r2_parity(self):
+        """Compute the difference in Pseudo R² between unprivileged and
+        privileged groups.
+
+        .. math::
+
+           \\Delta R^2 = R^2_{\\text{unprivileged}} - R^2_{\\text{privileged}}
+
+        A value of 0 indicates perfect fairness; a positive value indicates
+        the model explains more variance for the unprivileged group; a negative
+        value indicates the model explains more variance for the privileged
+        group.
+
+        Returns:
+            numpy.float64: Difference in Pseudo R² (unprivileged − privileged).
+        """
+        return self.difference(self.pseudo_r2)
