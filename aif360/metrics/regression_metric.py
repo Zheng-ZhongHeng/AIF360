@@ -2,6 +2,8 @@ import numpy as np
 from aif360.metrics import DatasetMetric, utils
 from aif360.datasets import RegressionDataset
 
+_LOG_CLIP_EPS = 1e-10
+
 
 class RegressionDatasetMetric(DatasetMetric):
     """Class for computing metrics based on a single
@@ -100,14 +102,31 @@ class RegressionDatasetMetric(DatasetMetric):
         return z
 
     def pseudo_r2(self, privileged=None):
-        """Compute the Pseudo R² (coefficient of determination) for a group.
+        """Compute McFadden's Pseudo R² for a group in a binary classification
+        setting.
 
         .. math::
 
-           R^2 = 1 - \\frac{SS_{res}}{SS_{tot}}
+           R^2_{McFadden} = 1 - \\frac{\\ln L_{model}}{\\ln L_{null}}
 
-        where :math:`SS_{res} = \\sum_i (y_i - \\hat{y}_i)^2` and
-        :math:`SS_{tot} = \\sum_i (y_i - \\bar{y})^2`.
+        where
+
+        .. math::
+
+           \\ln L_{model} = \\sum_i \\left[ y_i \\ln(\\hat{p}_i) +
+               (1 - y_i) \\ln(1 - \\hat{p}_i) \\right]
+
+        and
+
+        .. math::
+
+           \\ln L_{null} = \\sum_i \\left[ y_i \\ln(\\bar{p}) +
+               (1 - y_i) \\ln(1 - \\bar{p}) \\right]
+
+        :math:`\\hat{p}_i` are the predicted probabilities from
+        ``dataset.scores`` (values in ``[0, 1]``), :math:`y_i` are the binary
+        true labels (``0`` or ``1``) from ``dataset.labels``, and
+        :math:`\\bar{p}` is the base rate (mean of the labels) for the group.
 
         Args:
             privileged (bool, optional): Boolean prescribing whether to
@@ -116,8 +135,8 @@ class RegressionDatasetMetric(DatasetMetric):
                 meaning this metric is computed over the entire dataset.
 
         Returns:
-            numpy.float64: Pseudo R² value. Returns 0.0 if
-            :math:`SS_{tot} = 0` (all labels are identical).
+            numpy.float64: McFadden's Pseudo R² value. Returns ``0.0`` if
+            :math:`\\ln L_{null} = 0` (all labels are identical).
         """
         condition = self._to_condition(privileged)
         cond_vec = utils.compute_boolean_conditioning_vector(
@@ -128,13 +147,17 @@ class RegressionDatasetMetric(DatasetMetric):
         y_true = np.ravel(self.dataset.labels)[cond_vec]
         y_pred = np.ravel(self.dataset.scores)[cond_vec]
 
-        ss_res = np.sum((y_true - y_pred) ** 2)
-        ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+        y_pred_clipped = np.clip(y_pred, _LOG_CLIP_EPS, 1 - _LOG_CLIP_EPS)
+        ll_model = np.sum(y_true * np.log(y_pred_clipped) + (1 - y_true) * np.log(1 - y_pred_clipped))
 
-        if ss_tot == 0:
+        p_bar = np.mean(y_true)
+        p_bar_clipped = np.clip(p_bar, _LOG_CLIP_EPS, 1 - _LOG_CLIP_EPS)
+        ll_null = np.sum(y_true * np.log(p_bar_clipped) + (1 - y_true) * np.log(1 - p_bar_clipped))
+
+        if ll_null == 0:
             return np.float64(0.0)
 
-        return np.float64(1.0 - ss_res / ss_tot)
+        return np.float64(1.0 - ll_model / ll_null)
 
     def pseudo_r2_parity(self):
         """Compute the difference in Pseudo R² between unprivileged and
